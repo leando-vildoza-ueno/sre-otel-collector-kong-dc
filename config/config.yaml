@@ -1,0 +1,122 @@
+# Kong DC On-Premise OTel Collector Config
+# This config is used to collect metrics from the Kong DC On-Premise environment.
+# By SRE - Observability Team
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:8080
+    path: /health
+
+receivers:
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: kong-dc-integrations1
+          scrape_interval: 30s
+          scrape_timeout: 15s
+          metrics_path: /metrics
+          scheme: http
+          static_configs:
+            - targets:
+                - 10.40.200.100:8700
+          relabel_configs:
+            - source_labels: [__address__]
+              target_label: 'instance'
+              replacement: 'Kong DC Integration 1'
+
+        - job_name: kong-dc-integrations2
+          scrape_interval: 30s
+          scrape_timeout: 15s
+          metrics_path: /metrics
+          scheme: http
+          static_configs:
+            - targets:
+                - 10.40.200.101:8700
+          relabel_configs:
+            - source_labels: [__address__]
+              target_label: 'instance'
+              replacement: 'Kong DC Integration 2'
+        
+        - job_name: kong-dc-1
+          scrape_interval: 30s
+          scrape_timeout: 15s
+          metrics_path: /metrics
+          scheme: http
+          static_configs:
+            - targets:
+                - 10.40.200.100:8000
+          relabel_configs:
+            - source_labels: [__address__]
+              target_label: 'instance'
+              replacement: 'Kong DC 1'
+
+        - job_name: kong-dc-2
+          scrape_interval: 30s
+          scrape_timeout: 15s
+          metrics_path: /metrics
+          scheme: http
+          static_configs:
+            - targets:
+                - 10.40.200.101:8000
+          relabel_configs:
+            - source_labels: [__address__]
+              target_label: 'instance'
+              replacement: 'Kong DC 2'
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 2048
+    spike_limit_mib: 512
+
+  batch:
+    timeout: 5s
+    send_batch_size: 256
+    send_batch_max_size: 512
+
+  attributes/kong:
+    include:
+      match_type: regexp
+      metric_names:
+        - "^kong_.*$"
+    actions:
+      - key: service
+        action: extract
+        pattern: ^(?P<team>[^.]+)\.(?P<app>[^.]+)\.(?P<scope>[^.]+)\.service$
+
+exporters:
+  prometheusremotewrite: #Prometheus Remote Write → New Relic (para scrapeo Prometheus)
+    endpoint: https://metric-api.newrelic.com/prometheus/v1/write
+    headers:
+      api-key: ${NEW_RELIC_API_KEY}
+    external_labels:
+      collector: otel-collector
+      collector_instance: sre-otel-collector-1
+      system: kong
+      domain: kong-dc
+      env: PROD
+    timeout: 60s
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 1800s
+
+  prometheus/local: #Endpoint para scrapeo local de Prometheus (para debug y validación)
+    endpoint: 0.0.0.0:9464
+
+  debug:
+    verbosity: detailed
+
+service:
+  extensions: [health_check]
+  telemetry:
+    logs:
+      level: debug
+    metrics:
+      address: 0.0.0.0:8888
+  pipelines:
+    metrics:
+      receivers: [prometheus]
+      processors: [memory_limiter, attributes/kong, batch]
+      exporters: [debug, prometheusremotewrite, prometheus/local]
